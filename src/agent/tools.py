@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, ValidationError
 # ------------------------------------------------------------------------------
 class ToolCall(BaseModel):
     """Structured tool call from LLM"""
-    id: str = Field(default="call_undefined", description="Unique ID of the tool call")
+    id: str = Field(default_factory=lambda: f"call_{id(object())}", description="Unique ID of the tool call")
     name: str = Field(description="Name of the tool to call")
     parameters: Dict[str, Any] = Field(description="Parameters for the tool")
 
@@ -71,7 +71,8 @@ class ReadFileTool(BaseTool):
     def _validate_path(self, file_path: str) -> str:
         """Validate path is within project root and resolve absolute path"""
         abs_path = os.path.abspath(os.path.join(self.project_root, file_path))
-        if not abs_path.startswith(self.project_root):
+        root = os.path.join(self.project_root, "")  # ensure trailing separator
+        if not abs_path.startswith(root):
             raise PermissionError(f"Path traversal detected: {file_path} is outside project root")
         return abs_path
 
@@ -84,6 +85,10 @@ class ReadFileTool(BaseTool):
                 return ToolResult(success=False, content=f"File not found: {file_path}")
             if not os.path.isfile(abs_path):
                 return ToolResult(success=False, content=f"Path is not a file: {file_path}")
+
+            file_size = os.path.getsize(abs_path)
+            if file_size > 10 * 1024 * 1024:  # 10 MB limit
+                return ToolResult(success=False, content=f"File too large: {file_path} ({file_size} bytes, max 10MB)")
 
             with open(abs_path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -115,7 +120,8 @@ class WriteFileTool(BaseTool):
     def _validate_path(self, file_path: str) -> str:
         """Validate path is within project root and resolve absolute path"""
         abs_path = os.path.abspath(os.path.join(self.project_root, file_path))
-        if not abs_path.startswith(self.project_root):
+        root = os.path.join(self.project_root, "")  # ensure trailing separator
+        if not abs_path.startswith(root):
             raise PermissionError(f"Path traversal detected: {file_path} is outside project root")
         return abs_path
 

@@ -73,7 +73,7 @@ class Orchestrator:
             print(f"=======================\n")
 
             # Handle LLM error
-            if final_response and (final_response.startswith("Error:") or "error" in final_response.lower()):
+            if final_response and final_response.startswith("Error:"):
                 print(f"LLM Error: {final_response}")
                 self.task_tracker.add_error("LLMError", final_response)
                 self.context.add_message(role="assistant", content=final_response)
@@ -85,7 +85,7 @@ class Orchestrator:
                 self.context.add_message(role="assistant", content=final_response)
 
                 # Check for completion signal
-                if "TASK_COMPLETE" in final_response or self.task_tracker.state.iteration_count >= self.max_iterations -1:
+                if "TASK_COMPLETE" in final_response or self.task_tracker.state.iteration_count >= self.max_iterations - 1:
                     clean_output = final_response.replace("TASK_COMPLETE", "").strip()
                     self.task_tracker.mark_completed(
                         completion_reason="Task completed successfully",

@@ -150,10 +150,14 @@ class LLMGateway:
             if message.tool_calls:
                 tool_calls = []
                 for tc in message.tool_calls:
+                    try:
+                        params = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError as e:
+                        return None, f"Error: Invalid JSON in tool call arguments: {str(e)}"
                     tool_calls.append(ToolCall(
                         id=tc.id,
                         name=tc.function.name,
-                        parameters=json.loads(tc.function.arguments)
+                        parameters=params
                     ))
                 return tool_calls, None
 
