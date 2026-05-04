@@ -100,7 +100,6 @@ class AgentTUI:
                 text = (
                     self._session.prompt(
                         self._build_prompt(),
-                        bottom_toolbar=self._build_toolbar,
                     )
                     .strip()
                 )
@@ -126,29 +125,16 @@ class AgentTUI:
             return [("class:prompt", "⟳ ")]
         return [("class:prompt", "> ")]
 
-    def _build_toolbar(self) -> str:
-        if self._running:
-            return " Agent is running — type /stop to interrupt "
-        return " /help | /clear | /stop | /quit | Ctrl+C to exit "
-
     # ── messages ─────────────────────────────────────────────────────
 
     def _add_message(self, msg: str) -> None:
         self._messages.append(msg)
 
-    def _render_messages(self) -> Panel:
-        """Build a rich Panel from all accumulated messages."""
+    def _render_messages(self) -> Text:
+        """Build rich Text from all accumulated messages."""
         if not self._messages:
-            body = Text("(no messages yet)", style="dim")
-        else:
-            body = Text.from_markup("\n".join(self._messages))
-        return Panel(
-            body,
-            title="[bold]Messages[/bold]",
-            border_style="bright_blue",
-            box=box.ROUNDED,
-            padding=(0, 1),
-        )
+            return Text("(no messages yet)", style="dim")
+        return Text.from_markup("\n".join(self._messages))
 
     # ── welcome ──────────────────────────────────────────────────────
 
