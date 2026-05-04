@@ -1,7 +1,10 @@
 import os
 import json
+import warnings
 from typing import List, Dict, Any, Optional, Tuple
 from .tools import ToolCall, ToolResult
+
+import httpx
 
 # Try to import openai, install if needed
 try:
@@ -10,6 +13,44 @@ except ImportError:
     import subprocess
     subprocess.run(["pip", "install", "openai"], check=True)
     from openai import OpenAI, APIError as OpenAIAPIError
+
+
+# ── proxy helper ────────────────────────────────────────────────────────
+
+def _build_httpx_client() -> httpx.Client:
+    """Build an httpx.Client that handles socks:// proxies gracefully.
+
+    httpx only supports http:// proxy URLs natively.  If a socks:// proxy
+    is set in the environment we try httpx-socks; falling back to ignoring
+    the proxy (with a warning) if the package isn't installed.
+    """
+    candidate = (
+        os.environ.get("all_proxy")
+        or os.environ.get("ALL_PROXY")
+        or os.environ.get("https_proxy")
+        or os.environ.get("HTTPS_PROXY")
+        or os.environ.get("http_proxy")
+        or os.environ.get("HTTP_PROXY")
+    )
+
+    if candidate and candidate.startswith("socks"):
+        # Normalise "socks://" → "socks5://" (GNOME uses the bare scheme)
+        proxy_url = candidate.replace("socks://", "socks5://")
+        try:
+            from httpx_socks import SyncProxyTransport  # type: ignore
+            transport = SyncProxyTransport.from_url(proxy_url)
+            return httpx.Client(transport=transport)
+        except ImportError:
+            warnings.warn(
+                f"SOCKS proxy is set ({candidate}) but httpx-socks is not "
+                f"installed — proxy will be ignored.  "
+                f"Install it with: pip install httpx-socks",
+                stacklevel=2,
+            )
+            return httpx.Client(trust_env=False)
+
+    # No socks proxy — let httpx follow env vars normally
+    return httpx.Client()
 
 
 # Provider configurations
@@ -88,16 +129,18 @@ class LLMGateway:
             raise ValueError(f"API key not provided. Set {self.provider.upper()}_API_KEY or pass api_key.")
 
         # Initialize client
+        http_client = _build_httpx_client()
         if self.provider == "anthropic":
             # Use native Anthropic SDK
             from anthropic import Anthropic, APIError, APIConnectionError, AuthenticationError
-            self.client = Anthropic(api_key=self.api_key)
+            self.client = Anthropic(api_key=self.api_key, http_client=http_client)
             self._use_native = True
         else:
             # Use OpenAI-compatible client
             self.client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
+                http_client=http_client,
             )
             self._use_native = False
 
@@ -140,10 +183,6 @@ class LLMGateway:
                 max_tokens=self.max_tokens,
             )
 
-            # DEBUG: Print raw API response
-            print(f"\n[DEBUG LLMGateway] Raw API response: {response}")
-            print(f"[DEBUG LLMGateway] Response content: {response.choices[0].message}")
-
             message = response.choices[0].message
 
             # Check for tool calls
@@ -185,11 +224,6 @@ class LLMGateway:
                 messages=messages,
                 tools=tool_schemas
             )
-
-            # DEBUG: Print raw API response
-            print(f"\n[DEBUG LLMGateway] Raw Anthropic response: {response}")
-            print(f"[DEBUG LLMGateway] Stop reason: {response.stop_reason}")
-            print(f"[DEBUG LLMGateway] Content: {response.content}")
 
             if response.stop_reason == "tool_use":
                 tool_calls = []

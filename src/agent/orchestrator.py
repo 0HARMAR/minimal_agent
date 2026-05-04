@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Callable
 import os
 import json
 from dotenv import load_dotenv
@@ -20,12 +20,16 @@ class Orchestrator:
         max_iterations: int = None,
         model_name: str = None,
         api_key: str = None,
-        provider: str = None
+        provider: str = None,
+        stream_callback: Optional[Callable[[str], None]] = None,
+        stop_check: Optional[Callable[[], bool]] = None,
     ):
         # Load defaults from environment if not provided
         self.max_iterations = max_iterations or int(os.getenv("MAX_ITERATIONS", "10"))
         self.model_name = model_name or os.getenv("MODEL_NAME")
         self.provider = provider or os.getenv("LLM_PROVIDER", "deepseek")
+        self.stream_callback = stream_callback
+        self.stop_check = stop_check
 
         # Initialize components
         self.context = ContextManager()
@@ -39,12 +43,29 @@ class Orchestrator:
         # Add initial user objective to context
         self.context.add_message(role="user", content=f"Your task: {objective}")
 
+    def _emit(self, msg: str) -> None:
+        """Emit output to the stream callback, falling back to print."""
+        if self.stream_callback:
+            self.stream_callback(msg)
+        else:
+            print(msg)
+
     def run(self) -> str:
         """Run the main execution loop until termination"""
-        print(f"Starting agent execution for task: {self.task_tracker.state.objective}")
-        print(f"Max iterations: {self.max_iterations}\n")
+        self._emit(f"Starting agent execution for task: {self.task_tracker.state.objective}")
+        self._emit(f"Max iterations: {self.max_iterations}")
+        self._emit("")
 
         while True:
+            # Check if stop was requested externally
+            if self.stop_check and self.stop_check():
+                self.task_tracker.mark_completed(
+                    completion_reason="Stopped by user",
+                    final_output="Task stopped by user request."
+                )
+                self._emit("\n[bold yellow]Stop requested — terminating.[/bold yellow]")
+                break
+
             # Check if we should terminate
             should_terminate, reason = self.task_tracker.should_terminate()
             if should_terminate:
@@ -56,32 +77,26 @@ class Orchestrator:
 
             # Increment iteration counter
             self.task_tracker.increment_iteration()
-            print(f"\n=== Iteration {self.task_tracker.state.iteration_count}/{self.max_iterations} ===")
+            self._emit(f"\n=== Iteration {self.task_tracker.state.iteration_count}/{self.max_iterations} ===")
 
             # Get messages for LLM
             messages = self.context.get_prompt_messages()
             tool_schemas = self.tool_registry.get_tool_schemas()
 
             # Call LLM
-            print("Calling LLM...")
+            self._emit("Calling LLM...")
             tool_calls, final_response = self.llm_gateway.generate_response(messages, tool_schemas)
-
-            # DEBUG: Print raw AI response
-            print(f"\n=== RAW AI RESPONSE ===")
-            print(f"Tool calls: {tool_calls}")
-            print(f"Final response: {final_response}")
-            print(f"=======================\n")
 
             # Handle LLM error
             if final_response and final_response.startswith("Error:"):
-                print(f"LLM Error: {final_response}")
+                self._emit(f"LLM Error: {final_response}")
                 self.task_tracker.add_error("LLMError", final_response)
                 self.context.add_message(role="assistant", content=final_response)
                 continue
 
             # Handle final response
             if final_response is not None:
-                print(f"Received final response: {final_response[:200]}...")
+                self._emit(f"Received final response: {final_response[:200]}...")
                 self.context.add_message(role="assistant", content=final_response)
 
                 # Check for completion signal
@@ -96,12 +111,12 @@ class Orchestrator:
 
             # Handle tool calls
             if tool_calls:
-                print(f"Received {len(tool_calls)} tool call(s)")
+                self._emit(f"Received {len(tool_calls)} tool call(s)")
 
                 # Format tool_calls for the API
                 formatted_tool_calls = []
                 for i, tool_call in enumerate(tool_calls):
-                    print(f"  [{i+1}] Tool: {tool_call.name}, Params: {list(tool_call.parameters.keys())}")
+                    self._emit(f"  [{i+1}] Tool: {tool_call.name}, Params: {list(tool_call.parameters.keys())}")
                     formatted_tool_calls.append({
                         "id": tool_call.id,
                         "type": "function",
@@ -119,7 +134,7 @@ class Orchestrator:
                     # Execute tool
                     result = self.tool_registry.execute_tool_call(tool_call)
                     status = "SUCCESS" if result.success else "FAILED"
-                    print(f"    → {status}: {result.content[:100]}...")
+                    self._emit(f"    → {status}: {result.content[:100]}...")
 
                     # Add result to context
                     self.context.add_tool_result(
@@ -135,9 +150,9 @@ class Orchestrator:
                         self.task_tracker.add_error(f"ToolError:{tool_call.name}", result.content[:200])
 
         # Return final summary
-        print(f"\n=== Task Completed ===")
+        self._emit(f"\n=== Task Completed ===")
         summary = self.task_tracker.get_execution_summary()
-        print(summary)
+        self._emit(summary)
         return summary
 
     def get_state(self) -> dict:
