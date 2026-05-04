@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import queue
+import sys
 import threading
 import time
 from datetime import datetime
@@ -25,7 +26,13 @@ from rich import box
 
 from src.agent.orchestrator import Orchestrator
 
-LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent.log")
+def _get_log_path() -> str:
+    frozen = getattr(sys, "frozen", False)
+    if frozen:
+        return os.path.join(os.getcwd(), "agent.log")
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent.log")
+
+LOG_FILE = _get_log_path()
 
 
 # ── file-based logger (unchanged from original) ──────────────────────────

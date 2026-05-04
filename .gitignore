@@ -42,3 +42,6 @@ env/
 Thumbs.db
 
 .claude
+*.spec
+src/entry.py
+build.sh
