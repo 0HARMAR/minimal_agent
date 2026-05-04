@@ -19,7 +19,6 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.completion import WordCompleter
 from rich.console import Console
 from rich.panel import Panel
-from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 from rich import box
@@ -119,6 +118,7 @@ class AgentTUI:
                 continue
 
             self._add_message(f"[bold green]You:[/bold green] {text}")
+            self.console.print(Text.from_markup(f"[bold green]You:[/bold green] {text}"))
 
             if text.startswith("/"):
                 self._handle_command(text)
@@ -235,35 +235,33 @@ class AgentTUI:
         thread = threading.Thread(target=run_agent, daemon=True)
         thread.start()
 
-        # ── live display while agent runs ────────────────────────
-        with Live(
-            self._render_messages(),
-            console=self.console,
-            refresh_per_second=4,
-            transient=False,
-            vertical_overflow="visible",
-        ) as live:
-            while thread.is_alive():
-                # drain the queue into our message list
-                while True:
-                    try:
-                        msg = self._msg_queue.get_nowait()
-                    except queue.Empty:
-                        break
-                    self._add_message(msg)
-                live.update(self._render_messages())
-                time.sleep(0.05)
-
-            # final drain
+        # ── stream output while agent runs ──────────────────────
+        while thread.is_alive():
             while True:
                 try:
                     msg = self._msg_queue.get_nowait()
                 except queue.Empty:
                     break
                 self._add_message(msg)
-            live.update(self._render_messages())
+                if msg:
+                    self.console.print(Text.from_markup(msg))
+                else:
+                    self.console.print()
+            time.sleep(0.05)
 
-            self.console.print()  # blank line before next prompt
+        # final drain
+        while True:
+            try:
+                msg = self._msg_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._add_message(msg)
+            if msg:
+                self.console.print(Text.from_markup(msg))
+            else:
+                self.console.print()
+
+        self.console.print()  # blank line before next prompt
 
 
 # ── entry point ──────────────────────────────────────────────────────────
