@@ -218,7 +218,6 @@ class AgentTUI:
                 agent = Orchestrator(
                     project_root=os.getcwd(),
                     objective=objective,
-                    max_iterations=5,
                     stream_callback=emit,
                     stop_check=lambda: self._generation != my_gen,
                 )

@@ -41,7 +41,6 @@ def main():
     agent = Orchestrator(
         project_root=project_root,
         objective=task_objective,
-        max_iterations=5
     )
 
     result = agent.run()

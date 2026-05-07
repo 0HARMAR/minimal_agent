@@ -147,35 +147,99 @@ class WriteFileTool(BaseTool):
 
 class RunShellTool(BaseTool):
     name = "run_shell"
-    description = "Run a shell command in the project directory"
+    description = (
+        "Run a shell command in the project directory. "
+        "Allowed commands: ls, cat, grep, find, git, python, python3, npm, node, "
+        "pwd, echo, head, tail, wc, sort, uniq, cut, tr, sed, awk, xargs, diff, "
+        "mkdir, cp, mv, touch, dirname, basename, which, tee, printf, env. "
+        "Pipes (|) and output redirection (>, >>) are allowed. "
+        "Operators ;, &, $, and backticks are blocked."
+    )
     parameters = {
         "command": {
             "type": "string",
-            "description": "Shell command to execute",
+            "description": "Shell command to execute (see tool description for allowed commands and operators)",
             "required": True
         }
     }
 
-    # Whitelist of allowed commands (adjust as needed for your use case)
-    ALLOWED_COMMANDS = {"ls", "cat", "grep", "find", "git", "python", "python3", "npm", "node", "pwd", "echo", "head", "tail"}
-    # Blocked commands/keywords
-    BLOCKED_KEYWORDS = {"rm", "sudo", "su", "chmod", "chown", "wget", "curl", "ssh", "scp", ">", ">>", "|", ";", "&", "$", "`", "eval"}
+    ALLOWED_COMMANDS = {
+        "ls", "cat", "grep", "find", "git", "python", "python3", "npm", "node",
+        "pwd", "echo", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "sed",
+        "awk", "xargs", "diff", "mkdir", "cp", "mv", "touch", "dirname", "basename",
+        "which", "tee", "printf", "env",
+    }
+
+    # Dangerous commands — blocked as the base command (first word).
+    BLOCKED_COMMANDS = {"rm", "sudo", "su", "chmod", "chown", "wget", "curl", "ssh", "scp", "eval"}
+
+    # Shell metacharacters blocked only when they appear unquoted.
+    # Mapped to: (multi_char_variant, still_dangerous_in_double_quotes)
+    SHELL_META = {
+        ";":  (None, False),
+        "&":  (None, False),
+        "$":  (None, True),
+        "`":  (None, True),
+    }
+
+    def _scan_unquoted(self, command: str) -> str | None:
+        """Walk the command tracking shell quote state.
+
+        Returns the first dangerous metacharacter found outside an
+        appropriate quoting context, or None if the command is clean.
+        """
+        in_single = False
+        in_double = False
+        i = 0
+        while i < len(command):
+            ch = command[i]
+
+            if ch == "'" and not in_double:
+                in_single = not in_single
+                i += 1
+                continue
+            if ch == '"' and not in_single:
+                in_double = not in_double
+                i += 1
+                continue
+
+            if ch == '\\' and not in_single:
+                i += 2  # skip escaped char
+                continue
+
+            # Double-quoted: only $ and ` remain dangerous
+            if in_double and ch in ('$', '`'):
+                return ch
+
+            if not in_single and not in_double:
+                meta = self.SHELL_META.get(ch)
+                if meta:
+                    multi, _ = meta
+                    if multi and command.startswith(multi, i):
+                        return multi
+                    return ch
+
+            i += 1
+        return None
 
     def _validate_command(self, command: str) -> None:
         """Validate command is safe to execute"""
-        # Extract first word as command name
         cmd_parts = command.strip().split()
         if not cmd_parts:
             raise ValueError("Empty command")
 
         base_cmd = cmd_parts[0]
         if base_cmd not in self.ALLOWED_COMMANDS:
-            raise PermissionError(f"Command {base_cmd} is not allowed. Allowed commands: {', '.join(self.ALLOWED_COMMANDS)}")
+            raise PermissionError(
+                f"Command '{base_cmd}' is not allowed. "
+                f"Allowed commands: {', '.join(sorted(self.ALLOWED_COMMANDS))}"
+            )
+        if base_cmd in self.BLOCKED_COMMANDS:
+            raise PermissionError(f"Command '{base_cmd}' is blocked")
 
-        # Check for blocked keywords
-        for keyword in self.BLOCKED_KEYWORDS:
-            if keyword in command:
-                raise PermissionError(f"Command contains blocked keyword: {keyword}")
+        offender = self._scan_unquoted(command)
+        if offender:
+            raise PermissionError(f"Command contains blocked shell operator: {offender}")
 
     def run(self, parameters: Dict[str, Any]) -> ToolResult:
         try:

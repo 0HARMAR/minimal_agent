@@ -41,8 +41,10 @@ class ContextManager:
     def _trim_history(self) -> None:
         """Trim history to maintain max length, keeping the most recent messages"""
         if len(self.history) > self.max_history_length:
-            # Keep system prompt if exists, then keep the most recent messages
-            self.history = self.history[-self.max_history_length:]
+            # Preserve the first message (task objective) so the agent never
+            # forgets what it was asked to do, then keep the most recent messages.
+            first = self.history[:1]
+            self.history = first + self.history[-(self.max_history_length - 1):]
 
     def get_prompt_messages(self) -> List[Dict[str, Any]]:
         """Get messages formatted for LLM API call"""
