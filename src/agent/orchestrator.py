@@ -1,6 +1,7 @@
 from typing import Optional, Callable
 import os
 import json
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from .context import ContextManager
@@ -25,6 +26,7 @@ class Orchestrator:
         stop_check: Optional[Callable[[], bool]] = None,
     ):
         # Load defaults from environment if not provided
+        self.project_root = project_root
         self.max_iterations = max_iterations or int(os.getenv("MAX_ITERATIONS", "10"))
         self.model_name = model_name or os.getenv("MODEL_NAME")
         self.provider = provider or os.getenv("LLM_PROVIDER", "deepseek")
@@ -38,10 +40,14 @@ class Orchestrator:
         self.task_tracker = TaskTracker(objective, max_iterations=self.max_iterations)
 
         # Set up system prompt
-        self.context.set_system_prompt(LLMGateway.format_system_prompt())
+        self.system_prompt = LLMGateway.format_system_prompt()
+        self.context.set_system_prompt(self.system_prompt)
 
         # Add initial user objective to context
         self.context.add_message(role="user", content=f"Your task: {objective}")
+
+        # Per-iteration request log (written to disk at end of run)
+        self._iteration_logs: list = []
 
     def _emit(self, msg: str) -> None:
         """Emit output to the stream callback, falling back to print."""
@@ -49,6 +55,31 @@ class Orchestrator:
             self.stream_callback(msg)
         else:
             print(msg)
+
+    def _log_request(self, iteration: int, messages: list) -> None:
+        """Record the request messages for this iteration in memory."""
+        self._iteration_logs.append({
+            "iteration": iteration,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "messages": messages,
+        })
+
+    def _write_log(self) -> None:
+        """Write the complete request log as a single valid JSON file."""
+        log_path = os.path.join(self.project_root, "request_log.json")
+        tool_schemas = self.tool_registry.get_tool_schemas()
+        doc = {
+            "objective": self.task_tracker.state.objective,
+            "max_iterations": self.max_iterations,
+            "system_prompt": self.system_prompt,
+            "tool_schemas": tool_schemas,
+            "iterations": self._iteration_logs,
+        }
+        try:
+            with open(log_path, "w") as f:
+                json.dump(doc, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self._emit(f"[dim]Warning: failed to write request log: {e}[/dim]")
 
     def run(self) -> str:
         """Run the main execution loop until termination"""
@@ -82,6 +113,9 @@ class Orchestrator:
             # Get messages for LLM
             messages = self.context.get_prompt_messages()
             tool_schemas = self.tool_registry.get_tool_schemas()
+
+            # Log request messages per iteration
+            self._log_request(self.task_tracker.state.iteration_count, messages)
 
             # Call LLM
             self._emit("Calling LLM...")
@@ -148,6 +182,9 @@ class Orchestrator:
                     # Track errors
                     if not result.success:
                         self.task_tracker.add_error(f"ToolError:{tool_call.name}", result.content[:200])
+
+        # Write the request log
+        self._write_log()
 
         # Return final summary
         self._emit(f"\n=== Task Completed ===")
