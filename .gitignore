@@ -45,3 +45,5 @@ Thumbs.db
 *.spec
 src/entry.py
 build.sh
+
+tui/node_modules

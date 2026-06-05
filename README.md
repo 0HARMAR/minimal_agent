@@ -31,8 +31,7 @@ This agent implements the exact architecture described in `minimal_agent.md`, wi
    cp .env.example .env
    ```
 4. Edit `.env` and fill in:
-   - `LLM_PROVIDER`: Choose from `deepseek`, `openai`, `qwen`, `kimi`, `anthropic`, `azure`
-   - Corresponding API key: `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY`, `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, or `AZURE_OPENAI_API_KEY`
+   - `DEEPSEEK_API_KEY`: Your DeepSeek API key
    - `PROJECT_ROOT`: Path to the directory where the agent will operate (e.g., `/tmp/agent_test`)
    - Optional: Adjust `MAX_ITERATIONS` and `MODEL_NAME`
 
@@ -90,7 +89,7 @@ Once you understand the core implementation, try extending it:
 4. Add a planning module that breaks tasks into steps before execution
 5. Add unit test validation to automatically verify task completion
 6. Add a simple web UI or CLI interface
-7. Support other LLM providers (OpenAI, Gemini, etc.)
+7. Support other LLM providers (OpenAI, Gemini, Anthropic, etc.)
 
 ## Project Structure
 ```
