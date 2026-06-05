@@ -43,7 +43,6 @@ export default function App() {
   ]);
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
-  const [hasError, setHasError] = useState(false);
 
   // Status bar state
   const [iteration, setIteration] = useState(0);
@@ -55,7 +54,6 @@ export default function App() {
   const stopRef = useRef(false);
   const elapsedTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingBashRef = useRef<{ resolve: (v: boolean) => void } | null>(null);
-  const [pendingBashCmd, setPendingBashCmd] = useState<string | null>(null);
 
   // Elapsed timer
   useEffect(() => {
@@ -83,16 +81,15 @@ export default function App() {
     (command: string): Promise<boolean> => {
       return new Promise((resolve) => {
         pendingBashRef.current = { resolve };
-        setPendingBashCmd(command);
         addMessage(
-          <Box flexDirection="row">
-            <Text backgroundColor="#f9e2af" color="#1e1e2e" bold> BASH </Text>
+          <Box borderStyle="round" borderColor="#f9e2af" paddingLeft={1} paddingRight={1}>
+            <Text bold color="#f9e2af">bash</Text>
             <Text> </Text>
-            <Text dimColor>{command}</Text>
+            <Text>{command}</Text>
             <Text>  </Text>
-            <Text backgroundColor="#a6e3a1" color="#1e1e2e"> Y </Text>
-            <Text>/</Text>
-            <Text backgroundColor="#f38ba8" color="#1e1e2e"> N </Text>
+            <Text backgroundColor="#a6e3a1" color="#1e1e2e" bold> Y </Text>
+            <Text> / </Text>
+            <Text backgroundColor="#f38ba8" color="#1e1e2e" bold> N </Text>
           </Box>,
         );
       });
@@ -100,10 +97,21 @@ export default function App() {
     [addMessage],
   );
 
+  const onShellOutput = useCallback(
+    (command: string, output: string) => {
+      addMessage(
+        <Box flexDirection="column" paddingLeft={1}>
+          <Text dimColor>{command}</Text>
+          <Text color="#bac2de">{output}</Text>
+        </Box>,
+      );
+    },
+    [addMessage],
+  );
+
   const runAgent = useCallback(
     async (objective: string) => {
       setRunning(true);
-      setHasError(false);
       setIteration(0);
       setErrorCount(0);
       setStartTime(Date.now());
@@ -133,13 +141,15 @@ export default function App() {
         },
         stopCheck: () => stopRef.current,
         onConfirmBash,
+        onShellOutput,
       });
 
       try {
         await orch.run();
       } catch (e: any) {
-        addMessage(`Unexpected error: ${e.message}`);
-        setHasError(true);
+        addMessage(
+          <Text color="#f38ba8" bold>Error: {e.message}</Text>,
+        );
       } finally {
         setRunning(false);
       }
@@ -152,7 +162,13 @@ export default function App() {
       const trimmed = text.trim();
       if (!trimmed) return;
 
-      addMessage(`You: ${trimmed}`);
+      addMessage(
+        <Box borderStyle="round" borderColor="#a6e3a1" paddingLeft={1} paddingRight={1}>
+          <Text bold color="#a6e3a1">You</Text>
+          <Text> </Text>
+          <Text>{trimmed}</Text>
+        </Box>,
+      );
 
       if (trimmed.startsWith("/")) {
         const [cmd] = trimmed.slice(1).split(/\s+/);
@@ -204,24 +220,18 @@ export default function App() {
       if (lower === "y" || lower === "yes") {
         const resolve = pendingBashRef.current.resolve;
         pendingBashRef.current = null;
-        setPendingBashCmd(null);
         resolve(true);
         addMessage(
-          <Text>
-            <Text color="#a6e3a1" bold>  ALLOWED</Text>
-          </Text>,
+          <Text color="#a6e3a1" bold>  ✓ ALLOWED</Text>,
         );
         return;
       }
       if (lower === "n" || lower === "no" || key.escape) {
         const resolve = pendingBashRef.current.resolve;
         pendingBashRef.current = null;
-        setPendingBashCmd(null);
         resolve(false);
         addMessage(
-          <Text>
-            <Text color="#f38ba8" bold>  DENIED</Text>
-          </Text>,
+          <Text color="#f38ba8" bold>  ✗ DENIED</Text>,
         );
         return;
       }

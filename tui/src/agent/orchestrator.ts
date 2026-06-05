@@ -12,6 +12,7 @@ export interface OrchestratorOpts {
   onLog: (msg: string) => void;
   stopCheck: () => boolean;
   onConfirmBash?: (command: string) => Promise<boolean>;
+  onShellOutput?: (command: string, output: string) => void;
 }
 
 export class Orchestrator {
@@ -24,6 +25,7 @@ export class Orchestrator {
   private onLog: (msg: string) => void;
   private stopCheck: () => boolean;
   private onConfirmBash?: (command: string) => Promise<boolean>;
+  private onShellOutput?: (command: string, output: string) => void;
 
   constructor(opts: OrchestratorOpts) {
     this.projectRoot = opts.projectRoot;
@@ -31,6 +33,7 @@ export class Orchestrator {
     this.onLog = opts.onLog;
     this.stopCheck = opts.stopCheck;
     this.onConfirmBash = opts.onConfirmBash;
+    this.onShellOutput = opts.onShellOutput;
 
     this.context = new ContextManager();
     this.toolRegistry = new ToolRegistry(this.projectRoot);
@@ -76,7 +79,7 @@ export class Orchestrator {
 
       // Handle final text response
       if (finalResponse !== null) {
-        this.log(`Received final response: ${finalResponse.slice(0, 200)}...`);
+        this.log(finalResponse);
         this.context.addMessage("assistant", finalResponse);
 
         if (
@@ -119,6 +122,13 @@ export class Orchestrator {
           const result = this.toolRegistry.executeToolCall(tc);
 
           this.context.addToolResult(tc.name, result.success, result.content, tc.id, result.metadata as Record<string, unknown>);
+
+          if (tc.name === "run_shell") {
+            const out = result.content.trim();
+            if (out && this.onShellOutput) {
+              this.onShellOutput(tc.parameters.command as string, out);
+            }
+          }
 
           if (!result.success) {
             this.tracker.addError(`ToolError:${tc.name}`, result.content.slice(0, 200));
