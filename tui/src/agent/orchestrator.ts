@@ -42,7 +42,13 @@ export class Orchestrator {
 
     const systemPrompt = LLMGateway.formatSystemPrompt();
     this.context.setSystemPrompt(systemPrompt);
-    this.context.addMessage("user", `Your task: ${opts.objective}`);
+
+    const isSideQuest = opts.objective.startsWith("[SIDE] ");
+    const cleanObjective = isSideQuest ? opts.objective.slice(7).trim() : opts.objective;
+    this.context.addMessage("user", `Your task: ${cleanObjective}`);
+    if (isSideQuest) {
+      this.context.markIrrelevant();
+    }
   }
 
   async run(): Promise<string> {
@@ -79,8 +85,14 @@ export class Orchestrator {
 
       // Handle final text response
       if (finalResponse !== null) {
-        this.log(finalResponse);
-        this.context.addMessage("assistant", finalResponse);
+        const isIrrelevant = finalResponse.includes("[IRRELEVANT]");
+        const cleanResponse = finalResponse.replace("[IRRELEVANT]", "").trim();
+
+        this.log(cleanResponse);
+        this.context.addMessage("assistant", cleanResponse);
+        if (isIrrelevant) {
+          this.context.markIrrelevant();
+        }
 
         if (
           finalResponse.includes("TASK_COMPLETE") ||

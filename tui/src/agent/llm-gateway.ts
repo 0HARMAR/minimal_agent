@@ -89,7 +89,9 @@ Available tools:
 - write_file: Write content to a file in the project directory
 - run_shell: Run a shell command in the project directory
 
-When you are finished with the task, end your response with "TASK_COMPLETE" followed by your final summary.`
+When you are finished with the task, end your response with "TASK_COMPLETE" followed by your final summary.
+
+Context relevance: If the user's request or your internal exploration is a tangential side question not directly related to the main objective, prefix your response with "[IRRELEVANT]" so it won't pollute the conversation context for future iterations. Only use this for truly unrelated side queries or exploratory dead ends.`
     );
   }
 }

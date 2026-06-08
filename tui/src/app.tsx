@@ -25,10 +25,14 @@ const HELP_TEXT = [
   "Type any task description to run the agent.",
   "",
   "Commands:",
-  "  /help   — show this message",
-  "  /clear  — clear message history",
-  "  /stop   — stop a running agent",
-  "  /quit   — exit",
+  "  /help    — show this message",
+  "  /clear   — clear message history",
+  "  /stop    — stop a running agent",
+  "  /side    — ask a side question (won't pollute conversation context)",
+  "  /quit    — exit",
+  "",
+  "You can also prefix any objective with [SIDE] to mark it as irrelevant.",
+  "The agent may use [IRRELEVANT] to mark its own tangential exploration.",
   "",
   "Press Ctrl+C or Ctrl+D to exit at any time.",
 ];
@@ -171,7 +175,8 @@ export default function App() {
       );
 
       if (trimmed.startsWith("/")) {
-        const [cmd] = trimmed.slice(1).split(/\s+/);
+        const [cmd, ...args] = trimmed.slice(1).split(/\s+/);
+        const rest = args.join(" ");
 
         switch (cmd) {
           case "help":
@@ -183,6 +188,15 @@ export default function App() {
                 <Text key={line} color="cyan" bold>{line}</Text>
               )),
             ]);
+            break;
+          case "side":
+            if (!rest) {
+              addMessage("Usage: /side <your side question>");
+            } else if (running) {
+              addMessage("Agent is already running. Use /stop to interrupt first.");
+            } else {
+              runAgent(`[SIDE] ${rest}`);
+            }
             break;
           case "stop":
             if (running) {

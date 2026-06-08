@@ -68,12 +68,27 @@ export class ContextManager {
     }
   }
 
+  markIrrelevant(): void {
+    let foundAssistant = false;
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const msg = this.history[i];
+      if (!foundAssistant && msg.role === "assistant" && msg.content !== "") {
+        msg.metadata = { ...msg.metadata, irrelevant: true };
+        foundAssistant = true;
+      } else if (foundAssistant && msg.role === "user") {
+        msg.metadata = { ...msg.metadata, irrelevant: true };
+        break;
+      }
+    }
+  }
+
   getPromptMessages(): PromptMessage[] {
     const messages: PromptMessage[] = [];
     if (this.systemPrompt) {
       messages.push({ role: "system", content: this.systemPrompt });
     }
     for (const msg of this.history) {
+      if (msg.metadata?.irrelevant) continue;
       const m: PromptMessage = { role: msg.role, content: msg.content };
       if (msg.tool_call_id) m.tool_call_id = msg.tool_call_id;
       if (msg.tool_calls) m.tool_calls = msg.tool_calls;
