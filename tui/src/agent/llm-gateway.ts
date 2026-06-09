@@ -6,6 +6,7 @@ import type { ToolCall, ToolSchema } from "./tools.js";
 interface GenerateResult {
   toolCalls: ToolCall[] | null;
   finalResponse: string | null;
+  promptTokens?: number;
 }
 
 // ── LLMGateway ───────────────────────────────────────────────────────────
@@ -48,8 +49,9 @@ export class LLMGateway {
       });
 
       const message = response.choices[0]?.message;
+      const promptTokens = response.usage?.prompt_tokens;
       if (!message) {
-        return { toolCalls: null, finalResponse: "Error: No message in response" };
+        return { toolCalls: null, finalResponse: "Error: No message in response", promptTokens };
       }
 
       if (message.tool_calls && message.tool_calls.length > 0) {
@@ -59,13 +61,13 @@ export class LLMGateway {
             const params = JSON.parse(tc.function.arguments);
             toolCalls.push({ id: tc.id, name: tc.function.name, parameters: params });
           } catch {
-            return { toolCalls: null, finalResponse: `Error: Invalid JSON in tool call arguments: ${tc.function.arguments}` };
+            return { toolCalls: null, finalResponse: `Error: Invalid JSON in tool call arguments: ${tc.function.arguments}`, promptTokens };
           }
         }
-        return { toolCalls, finalResponse: null };
+        return { toolCalls, finalResponse: null, promptTokens };
       }
 
-      return { toolCalls: null, finalResponse: message.content?.trim() ?? "" };
+      return { toolCalls: null, finalResponse: message.content?.trim() ?? "", promptTokens };
     } catch (e: any) {
       return { toolCalls: null, finalResponse: `Error: ${e.message ?? String(e)}` };
     }

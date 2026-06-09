@@ -52,6 +52,7 @@ export default function App() {
   const [iteration, setIteration] = useState(0);
   const [maxIterations, setMaxIterations] = useState(10);
   const [errorCount, setErrorCount] = useState(0);
+  const [contextStats, setContextStats] = useState<{ total: number; relevant: number; promptTokens: number } | null>(null);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -146,6 +147,7 @@ export default function App() {
         stopCheck: () => stopRef.current,
         onConfirmBash,
         onShellOutput,
+        onContextStats: (stats) => setContextStats(stats),
       });
 
       try {
@@ -266,6 +268,7 @@ export default function App() {
         errors={errorCount}
         elapsed={elapsed}
         visible={running || startTime !== null}
+        contextStats={contextStats}
       />
       <InputBox
         value={input}

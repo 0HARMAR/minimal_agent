@@ -13,6 +13,7 @@ export interface OrchestratorOpts {
   stopCheck: () => boolean;
   onConfirmBash?: (command: string) => Promise<boolean>;
   onShellOutput?: (command: string, output: string) => void;
+  onContextStats?: (stats: { total: number; relevant: number; promptTokens: number }) => void;
 }
 
 export class Orchestrator {
@@ -26,6 +27,8 @@ export class Orchestrator {
   private stopCheck: () => boolean;
   private onConfirmBash?: (command: string) => Promise<boolean>;
   private onShellOutput?: (command: string, output: string) => void;
+  private promptTokens = 0;
+  private onContextStats?: (stats: { total: number; relevant: number; promptTokens: number }) => void;
 
   constructor(opts: OrchestratorOpts) {
     this.projectRoot = opts.projectRoot;
@@ -34,6 +37,7 @@ export class Orchestrator {
     this.stopCheck = opts.stopCheck;
     this.onConfirmBash = opts.onConfirmBash;
     this.onShellOutput = opts.onShellOutput;
+    this.onContextStats = opts.onContextStats;
 
     this.context = new ContextManager();
     this.toolRegistry = new ToolRegistry(this.projectRoot);
@@ -49,6 +53,7 @@ export class Orchestrator {
     if (isSideQuest) {
       this.context.markIrrelevant();
     }
+    this.emitContextStats();
   }
 
   async run(): Promise<string> {
@@ -73,13 +78,15 @@ export class Orchestrator {
 
       const messages = this.context.getPromptMessages();
       const toolSchemas = this.toolRegistry.getToolSchemas();
-      const { toolCalls, finalResponse } = await this.llm.generateResponse(messages, toolSchemas);
+      const { toolCalls, finalResponse, promptTokens } = await this.llm.generateResponse(messages, toolSchemas);
+      if (promptTokens !== undefined) this.promptTokens = promptTokens;
 
       // Handle LLM error
       if (finalResponse && finalResponse.startsWith("Error:")) {
         this.log(`LLM Error: ${finalResponse}`);
         this.tracker.addError("LLMError", finalResponse);
         this.context.addMessage("assistant", finalResponse);
+        this.emitContextStats();
         continue;
       }
 
@@ -93,6 +100,7 @@ export class Orchestrator {
         if (isIrrelevant) {
           this.context.markIrrelevant();
         }
+        this.emitContextStats();
 
         if (
           finalResponse.includes("TASK_COMPLETE") ||
@@ -146,6 +154,7 @@ export class Orchestrator {
             this.tracker.addError(`ToolError:${tc.name}`, result.content.slice(0, 200));
           }
         }
+        this.emitContextStats();
       }
     }
     return this.tracker.getExecutionSummary();
@@ -153,5 +162,10 @@ export class Orchestrator {
 
   private log(msg: string): void {
     this.onLog(msg);
+  }
+
+  private emitContextStats(): void {
+    const { total, relevant } = this.context.getStats();
+    this.onContextStats?.({ total, relevant, promptTokens: this.promptTokens });
   }
 }

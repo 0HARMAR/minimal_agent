@@ -1,14 +1,21 @@
 import { Box, Text } from "ink";
 
+interface ContextStats {
+  total: number;
+  relevant: number;
+  promptTokens: number;
+}
+
 interface StatusBarProps {
   iteration: number;
   maxIterations: number;
   errors: number;
   elapsed: number; // seconds
   visible: boolean;
+  contextStats?: ContextStats | null;
 }
 
-export default function StatusBar({ iteration, maxIterations, errors, elapsed, visible }: StatusBarProps) {
+export default function StatusBar({ iteration, maxIterations, errors, elapsed, visible, contextStats }: StatusBarProps) {
   if (!visible) return null;
 
   const elapsedStr =
@@ -19,13 +26,16 @@ export default function StatusBar({ iteration, maxIterations, errors, elapsed, v
   return (
     <Box paddingLeft={1} paddingRight={1} paddingTop={1} justifyContent="space-between">
       <Text dimColor>
-        Iteration: {iteration}/{maxIterations}
+        Iter: {iteration}/{maxIterations}
       </Text>
       <Text dimColor>
-        Errors: {errors}
+        Err: {errors}
       </Text>
       <Text dimColor>
-        Elapsed: {elapsedStr}
+        Ctx: {contextStats ? `${contextStats.promptTokens} tok` : "?"}
+      </Text>
+      <Text dimColor>
+        {elapsedStr}
       </Text>
     </Box>
   );

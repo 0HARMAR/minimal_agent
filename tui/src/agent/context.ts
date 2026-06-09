@@ -97,6 +97,18 @@ export class ContextManager {
     return messages;
   }
 
+  getStats(): { total: number; relevant: number } {
+    let total = 0;
+    let relevant = 0;
+    for (const msg of this.history) {
+      total++;
+      if (!msg.metadata?.irrelevant) {
+        relevant++;
+      }
+    }
+    return { total, relevant };
+  }
+
   clear(): void {
     this.history = [];
   }
