@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Box, Static, Text } from "ink";
+import MarkdownText from "./MarkdownText.js";
 
 interface MessageLogProps {
   messages: ReactNode[];
@@ -18,8 +19,8 @@ export default function MessageLog({ messages }: MessageLogProps) {
     <Box flexGrow={1} flexDirection="column">
       <Static items={messages}>
         {(msg, i) => (
-          <Box key={i} paddingLeft={1}>
-            {typeof msg === "string" ? <Text>{msg}</Text> : msg}
+          <Box key={i} flexDirection="column" paddingLeft={1}>
+            {typeof msg === "string" ? <MarkdownText>{msg}</MarkdownText> : msg}
           </Box>
         )}
       </Static>
