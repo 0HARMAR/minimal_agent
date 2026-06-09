@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect, type ReactNode } from "react";
 import { Box, Text, useInput, useApp } from "ink";
+import { ContextManager } from "./agent/context.js";
+import { LLMGateway } from "./agent/llm-gateway.js";
 import { Orchestrator } from "./agent/orchestrator.js";
 import MessageLog from "./components/MessageLog.js";
 import InputBox from "./components/InputBox.js";
@@ -31,8 +33,7 @@ const HELP_TEXT = [
   "  /side    — ask a side question (won't pollute conversation context)",
   "  /quit    — exit",
   "",
-  "You can also prefix any objective with [SIDE] to mark it as irrelevant.",
-  "The agent may use [IRRELEVANT] to mark its own tangential exploration.",
+  "You can also prefix any objective with [SIDE] to mark it as a side question.",
   "",
   "Press Ctrl+C or Ctrl+D to exit at any time.",
 ];
@@ -59,6 +60,12 @@ export default function App() {
   const stopRef = useRef(false);
   const elapsedTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingBashRef = useRef<{ resolve: (v: boolean) => void } | null>(null);
+  const contextRef = useRef<ContextManager>(new ContextManager());
+
+  // Initialize session-level context
+  useEffect(() => {
+    contextRef.current.setSystemPrompt(LLMGateway.formatSystemPrompt());
+  }, []);
 
   // Elapsed timer
   useEffect(() => {
@@ -116,6 +123,7 @@ export default function App() {
 
   const runAgent = useCallback(
     async (objective: string) => {
+      const isSide = objective.startsWith("[SIDE] ");
       setRunning(true);
       setIteration(0);
       setErrorCount(0);
@@ -131,6 +139,7 @@ export default function App() {
         maxIterations: parseInt(process.env["MAX_ITERATIONS"] ?? "10", 10),
         modelName: process.env["MODEL_NAME"],
         apiKey: process.env["DEEPSEEK_API_KEY"],
+        context: contextRef.current,
         onLog: (msg: string) => {
           addMessage(msg);
           // Try to extract iteration info from messages
@@ -157,6 +166,9 @@ export default function App() {
           <Text color="#f38ba8" bold>Error: {e.message}</Text>,
         );
       } finally {
+        if (isSide) {
+          contextRef.current.markIrrelevant();
+        }
         setRunning(false);
       }
     },
@@ -190,6 +202,8 @@ export default function App() {
                 <Text key={line} color="cyan" bold>{line}</Text>
               )),
             ]);
+            contextRef.current.clear();
+            contextRef.current.setSystemPrompt(LLMGateway.formatSystemPrompt());
             break;
           case "side":
             if (!rest) {

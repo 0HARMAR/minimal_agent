@@ -9,6 +9,7 @@ export interface OrchestratorOpts {
   maxIterations?: number;
   modelName?: string;
   apiKey?: string;
+  context?: ContextManager;
   onLog: (msg: string) => void;
   stopCheck: () => boolean;
   onConfirmBash?: (command: string) => Promise<boolean>;
@@ -39,7 +40,7 @@ export class Orchestrator {
     this.onShellOutput = opts.onShellOutput;
     this.onContextStats = opts.onContextStats;
 
-    this.context = new ContextManager();
+    this.context = opts.context ?? new ContextManager();
     this.toolRegistry = new ToolRegistry(this.projectRoot);
     this.llm = new LLMGateway(opts.apiKey, opts.modelName);
     this.tracker = new TaskTracker(opts.objective, this.maxIterations);
@@ -50,9 +51,6 @@ export class Orchestrator {
     const isSideQuest = opts.objective.startsWith("[SIDE] ");
     const cleanObjective = isSideQuest ? opts.objective.slice(7).trim() : opts.objective;
     this.context.addMessage("user", `Your task: ${cleanObjective}`);
-    if (isSideQuest) {
-      this.context.markIrrelevant();
-    }
     this.emitContextStats();
   }
 
@@ -92,14 +90,8 @@ export class Orchestrator {
 
       // Handle final text response
       if (finalResponse !== null) {
-        const isIrrelevant = finalResponse.includes("[IRRELEVANT]");
-        const cleanResponse = finalResponse.replace("[IRRELEVANT]", "").trim();
-
-        this.log(cleanResponse);
-        this.context.addMessage("assistant", cleanResponse);
-        if (isIrrelevant) {
-          this.context.markIrrelevant();
-        }
+        this.log(finalResponse);
+        this.context.addMessage("assistant", finalResponse);
         this.emitContextStats();
 
         if (

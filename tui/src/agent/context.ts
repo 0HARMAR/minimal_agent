@@ -69,15 +69,21 @@ export class ContextManager {
   }
 
   markIrrelevant(): void {
-    let foundAssistant = false;
     for (let i = this.history.length - 1; i >= 0; i--) {
       const msg = this.history[i];
-      if (!foundAssistant && msg.role === "assistant" && msg.content !== "") {
+      if (msg.role === "assistant" && msg.content !== "") {
         msg.metadata = { ...msg.metadata, irrelevant: true };
-        foundAssistant = true;
-      } else if (foundAssistant && msg.role === "user") {
+        for (let j = i - 1; j >= 0; j--) {
+          if (this.history[j].role === "user") {
+            this.history[j].metadata = { ...this.history[j].metadata, irrelevant: true };
+            return;
+          }
+        }
+        return;
+      }
+      if (msg.role === "user") {
         msg.metadata = { ...msg.metadata, irrelevant: true };
-        break;
+        return;
       }
     }
   }
