@@ -11,6 +11,7 @@ export interface OrchestratorOpts {
   apiKey?: string;
   context?: ContextManager;
   onLog: (msg: string) => void;
+  onResponse?: (msg: string) => void;
   stopCheck: () => boolean;
   onConfirmBash?: (command: string) => Promise<boolean>;
   onShellOutput?: (command: string, output: string) => void;
@@ -25,6 +26,7 @@ export class Orchestrator {
   private llm: LLMGateway;
   private tracker: TaskTracker;
   private onLog: (msg: string) => void;
+  private onResponse?: (msg: string) => void;
   private stopCheck: () => boolean;
   private onConfirmBash?: (command: string) => Promise<boolean>;
   private onShellOutput?: (command: string, output: string) => void;
@@ -35,6 +37,7 @@ export class Orchestrator {
     this.projectRoot = opts.projectRoot;
     this.maxIterations = opts.maxIterations ?? parseInt(process.env["MAX_ITERATIONS"] ?? "10", 10);
     this.onLog = opts.onLog;
+    this.onResponse = opts.onResponse;
     this.stopCheck = opts.stopCheck;
     this.onConfirmBash = opts.onConfirmBash;
     this.onShellOutput = opts.onShellOutput;
@@ -79,7 +82,6 @@ export class Orchestrator {
       const { toolCalls, finalResponse, promptTokens } = await this.llm.generateResponse(messages, toolSchemas);
       if (promptTokens !== undefined) this.promptTokens = promptTokens;
 
-      // Handle LLM error
       if (finalResponse && finalResponse.startsWith("Error:")) {
         this.log(`LLM Error: ${finalResponse}`);
         this.tracker.addError("LLMError", finalResponse);
@@ -88,9 +90,12 @@ export class Orchestrator {
         continue;
       }
 
-      // Handle final text response
       if (finalResponse !== null) {
-        this.log(finalResponse);
+        if (this.onResponse) {
+          this.onResponse(finalResponse);
+        } else {
+          this.log(finalResponse);
+        }
         this.context.addMessage("assistant", finalResponse);
         this.emitContextStats();
 
@@ -105,7 +110,6 @@ export class Orchestrator {
         continue;
       }
 
-      // Handle tool calls
       if (toolCalls) {
         const formattedToolCalls = toolCalls.map((tc) => {
           return {

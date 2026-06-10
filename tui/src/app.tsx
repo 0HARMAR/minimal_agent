@@ -4,6 +4,7 @@ import { ContextManager } from "./agent/context.js";
 import { LLMGateway } from "./agent/llm-gateway.js";
 import { Orchestrator } from "./agent/orchestrator.js";
 import MessageLog from "./components/MessageLog.js";
+import MarkdownText from "./components/MarkdownText.js";
 import InputBox from "./components/InputBox.js";
 import StatusBar from "./components/StatusBar.js";
 
@@ -62,12 +63,10 @@ export default function App() {
   const pendingBashRef = useRef<{ resolve: (v: boolean) => void } | null>(null);
   const contextRef = useRef<ContextManager>(new ContextManager());
 
-  // Initialize session-level context
   useEffect(() => {
     contextRef.current.setSystemPrompt(LLMGateway.formatSystemPrompt());
   }, []);
 
-  // Elapsed timer
   useEffect(() => {
     if (running && startTime !== null) {
       elapsedTimerRef.current = setInterval(() => {
@@ -142,7 +141,6 @@ export default function App() {
         context: contextRef.current,
         onLog: (msg: string) => {
           addMessage(msg);
-          // Try to extract iteration info from messages
           const iterMatch = msg.match(/=== Iteration (\d+)\/(\d+) ===/);
           if (iterMatch) {
             setIteration(parseInt(iterMatch[1], 10));
@@ -151,6 +149,15 @@ export default function App() {
           const errMatch = msg.match(/Error/);
           if (errMatch) {
             setErrorCount((prev) => prev + 1);
+          }
+        },
+        onResponse: (msg: string) => {
+          if (msg) {
+            addMessage(
+              <Box flexDirection="column" paddingLeft={1}>
+                <MarkdownText>{msg}</MarkdownText>
+              </Box>,
+            );
           }
         },
         stopCheck: () => stopRef.current,
@@ -243,7 +250,6 @@ export default function App() {
     [running, runAgent, addMessage, addMessages, exit],
   );
 
-  // Global keyboard shortcuts (Ctrl+Z to stop)
   useInput((input, key) => {
     if (pendingBashRef.current) {
       const lower = input.toLowerCase();
