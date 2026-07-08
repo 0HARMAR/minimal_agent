@@ -15,6 +15,8 @@ export interface TaskState {
   finalOutput: string | null;
   startTime: Date;
   endTime: Date | null;
+  currentStep: number;
+  totalSteps: number;
 }
 
 export class TaskTracker {
@@ -31,11 +33,24 @@ export class TaskTracker {
       finalOutput: null,
       startTime: new Date(),
       endTime: null,
+      currentStep: 0,
+      totalSteps: 0,
     };
   }
 
   incrementIteration(): void {
     this.state.iterationCount++;
+  }
+
+  setSteps(total: number): void {
+    this.state.totalSteps = total;
+    this.state.currentStep = total > 0 ? 1 : 0;
+  }
+
+  advanceStep(): void {
+    if (this.state.currentStep < this.state.totalSteps) {
+      this.state.currentStep++;
+    }
   }
 
   addError(errorType: string, message: string): void {
@@ -79,6 +94,7 @@ export class TaskTracker {
       `Iterations: ${this.state.iterationCount}/${this.state.maxIterations}`,
       `Duration: ${duration.toFixed(2)} seconds`,
       `Errors: ${this.state.errors.length} total`,
+      `Steps: ${this.state.currentStep}/${this.state.totalSteps}`,
     ];
 
     if (this.state.isCompleted) {

@@ -3,6 +3,7 @@ import { Box, Text, useInput, useApp } from "ink";
 import { ContextManager } from "./agent/context.js";
 import { LLMGateway } from "./agent/llm-gateway.js";
 import { Orchestrator } from "./agent/orchestrator.js";
+import type { Plan } from "./agent/planner.js";
 import MessageLog from "./components/MessageLog.js";
 import MarkdownText from "./components/MarkdownText.js";
 import InputBox from "./components/InputBox.js";
@@ -57,6 +58,8 @@ export default function App() {
   const [contextStats, setContextStats] = useState<{ total: number; relevant: number; promptTokens: number } | null>(null);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [totalSteps, setTotalSteps] = useState(0);
 
   const stopRef = useRef(false);
   const elapsedTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -126,6 +129,8 @@ export default function App() {
       setRunning(true);
       setIteration(0);
       setErrorCount(0);
+      setCurrentStep(0);
+      setTotalSteps(0);
       setStartTime(Date.now());
       setElapsed(0);
       stopRef.current = false;
@@ -164,6 +169,25 @@ export default function App() {
         onConfirmBash,
         onShellOutput,
         onContextStats: (stats) => setContextStats(stats),
+        onPlanGenerated: (plan: Plan) => {
+          setTotalSteps(plan.steps.length);
+          setCurrentStep(1);
+          addMessage(
+            <Box flexDirection="column" paddingLeft={1} paddingTop={1} paddingBottom={1}>
+              <Text bold color="#89b4fa">── Execution Plan ──</Text>
+              {plan.steps.map((s) => (
+                <Text key={s.id} color="#a6e3a1">
+                  {s.id}. {s.description}
+                </Text>
+              ))}
+              <Text bold color="#89b4fa">────────────────────</Text>
+            </Box>,
+          );
+        },
+        onStepChange: (step: number, total: number) => {
+          setCurrentStep(step);
+          setTotalSteps(total);
+        },
       });
 
       try {
@@ -288,6 +312,8 @@ export default function App() {
         errors={errorCount}
         elapsed={elapsed}
         visible={running || startTime !== null}
+        currentStep={currentStep}
+        totalSteps={totalSteps}
         contextStats={contextStats}
       />
       <InputBox

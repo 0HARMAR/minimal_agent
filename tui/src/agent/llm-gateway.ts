@@ -94,4 +94,25 @@ Available tools:
 When you are finished with the task, end your response with "TASK_COMPLETE" followed by your final summary.`
     );
   }
+
+  /** System prompt used by the Planner to generate step-by-step plans. */
+  static PLANNER_SYSTEM_PROMPT = `You are a precise task planner. Your job is to break down software development tasks into clear, sequential steps.
+
+Rules:
+1. Analyze the objective and decompose it into 3 to 10 atomic steps
+2. Each step must be a single verifiable action
+3. Steps must be in dependency order
+4. Be specific — include file names, function names, and concrete actions
+5. Return ONLY valid JSON with no explanation before or after
+
+Format:
+{
+  "steps": [
+    {
+      "id": 1,
+      "description": "Concrete action description (e.g. 'Read src/main.ts to understand existing structure')",
+      "expectedOutcome": "What success looks like"
+    }
+  ]
+}`;
 }

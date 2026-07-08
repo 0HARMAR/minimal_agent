@@ -12,10 +12,12 @@ interface StatusBarProps {
   errors: number;
   elapsed: number; // seconds
   visible: boolean;
+  currentStep: number;
+  totalSteps: number;
   contextStats?: ContextStats | null;
 }
 
-export default function StatusBar({ iteration, maxIterations, errors, elapsed, visible, contextStats }: StatusBarProps) {
+export default function StatusBar({ iteration, maxIterations, errors, elapsed, visible, currentStep, totalSteps, contextStats }: StatusBarProps) {
   if (!visible) return null;
 
   const elapsedStr =
@@ -31,6 +33,11 @@ export default function StatusBar({ iteration, maxIterations, errors, elapsed, v
       <Text dimColor>
         Err: {errors}
       </Text>
+      {totalSteps > 0 && (
+        <Text dimColor>
+          Step: {currentStep}/{totalSteps}
+        </Text>
+      )}
       <Text dimColor>
         Ctx: {contextStats ? `${contextStats.promptTokens} tok` : "?"}
       </Text>
