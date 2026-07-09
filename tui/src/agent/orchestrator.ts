@@ -5,6 +5,7 @@ import { ToolRegistry, SearchCodebaseTool } from "./tools.js";
 import { LLMGateway } from "./llm-gateway.js";
 import { TaskTracker } from "./task-tracker.js";
 import { Planner, type Plan } from "./planner.js";
+import { TaskTree } from "./task-tree.js";
 
 export interface OrchestratorOpts {
   projectRoot: string;
@@ -45,6 +46,9 @@ export class Orchestrator {
   private onStepChange?: (step: number, total: number) => void;
   private ragReady = false;
   private enableRag = false;
+  private taskTree: TaskTree;
+  private rootTaskId: string | null = null;
+  private lastToolCategory: string | null = null;
 
   constructor(opts: OrchestratorOpts) {
     this.projectRoot = opts.projectRoot;
@@ -63,13 +67,23 @@ export class Orchestrator {
     this.llm = new LLMGateway(opts.apiKey, opts.modelName);
     this.tracker = new TaskTracker(opts.objective, this.maxIterations);
     this.planner = new Planner(this.llm);
+    this.taskTree = new TaskTree();
 
     const systemPrompt = LLMGateway.formatSystemPrompt();
     this.context.setSystemPrompt(systemPrompt);
 
     const isSideQuest = opts.objective.startsWith("[SIDE] ");
     const cleanObjective = isSideQuest ? opts.objective.slice(7).trim() : opts.objective;
-    this.context.addMessage("user", `Your task: ${cleanObjective}`);
+
+    // Create root task in the task tree
+    const rootTask = this.taskTree.createRootTask(cleanObjective, isSideQuest);
+    this.rootTaskId = rootTask.id;
+
+    // Add the user message and extend the task's range
+    const msgIdx = this.context.addMessage("user", `Your task: ${cleanObjective}`);
+    this.taskTree.extendActiveRange(msgIdx + 1);
+    this.taskTree.recordMessages(msgIdx + 1);
+
     this.emitContextStats();
 
     // Mark RAG for async init in run() if enabled
@@ -109,6 +123,9 @@ export class Orchestrator {
 
       this.tracker.incrementIteration();
 
+      // Apply task-tree-based context trimming before LLM call
+      this.applyContextTrim();
+
       const messages = this.context.getPromptMessages();
       this.logRequestPrompt(this.tracker.state.iterationCount, messages);
       const toolSchemas = this.toolRegistry.getToolSchemas();
@@ -118,7 +135,7 @@ export class Orchestrator {
       if (finalResponse && finalResponse.startsWith("Error:")) {
         this.log(`LLM Error: ${finalResponse}`);
         this.tracker.addError("LLMError", finalResponse);
-        this.context.addMessage("assistant", finalResponse);
+        this.trackMessage("assistant", finalResponse);
         this.emitContextStats();
         continue;
       }
@@ -129,7 +146,7 @@ export class Orchestrator {
         } else {
           this.log(finalResponse);
         }
-        this.context.addMessage("assistant", finalResponse);
+        this.trackMessage("assistant", finalResponse);
         this.emitContextStats();
 
         // ── Step Completion Detection ──────────────────────────────
@@ -137,10 +154,13 @@ export class Orchestrator {
           this.checkStepCompletion(finalResponse);
         }
 
-        if (
-          finalResponse.includes("TASK_COMPLETE") ||
-          this.tracker.state.iterationCount >= this.maxIterations - 1
+        if (finalResponse.includes("TASK_COMPLETE") ||
+            this.tracker.state.iterationCount >= this.maxIterations - 1
         ) {
+          // Mark root task as completed in the task tree
+          if (this.rootTaskId) {
+            this.taskTree.completeNode(this.rootTaskId);
+          }
           const clean = finalResponse.replace("TASK_COMPLETE", "").trim();
           this.tracker.markCompleted("Task completed successfully", clean);
           break;
@@ -160,7 +180,7 @@ export class Orchestrator {
           };
         });
 
-        this.context.addMessage("assistant", "", { toolCalls: formattedToolCalls });
+        this.trackMessage("assistant", "", { toolCalls: formattedToolCalls });
 
         for (const tc of toolCalls) {
           if (tc.name === "run_shell" && this.onConfirmBash) {
@@ -175,7 +195,7 @@ export class Orchestrator {
 
           const result = await this.toolRegistry.executeToolCall(tc);
 
-          this.context.addToolResult(tc.name, result.success, result.content, tc.id, result.metadata as Record<string, unknown>);
+          this.trackToolResult(tc.name, result.success, result.content, tc.id, result.metadata as Record<string, unknown>);
 
           if (tc.name === "run_shell") {
             const out = result.content.trim();
@@ -189,9 +209,208 @@ export class Orchestrator {
           }
         }
         this.emitContextStats();
+
+        // ── Implicit subtask detection via tool pattern ────────────
+        this.detectToolCategoryShift(toolCalls);
       }
     }
     return this.tracker.getExecutionSummary();
+  }
+
+  // ── Private: Message tracking ────────────────────────────────────────
+
+  /** Add a message to context AND track it in the active task node. */
+  private trackMessage(
+    role: import("./context.js").Message["role"],
+    content: string,
+    opts?: { toolCallId?: string; toolCalls?: Record<string, unknown>[]; metadata?: Record<string, unknown> },
+  ): number {
+    const idx = this.context.addMessage(role, content, opts);
+    this.taskTree.extendActiveRange(idx + 1);
+    return idx;
+  }
+
+  /** Add a tool result to context AND track it. */
+  private trackToolResult(
+    toolName: string,
+    success: boolean,
+    content: string,
+    toolCallId: string,
+    metadata?: Record<string, unknown>,
+  ): number {
+    const idx = this.context.addToolResult(toolName, success, content, toolCallId, metadata);
+    this.taskTree.extendActiveRange(idx + 1);
+    return idx;
+  }
+
+  /**
+   * Compress completed tree nodes and trim the context before each LLM call.
+   * Builds human-readable summaries for compressed nodes and inserts them
+   * into context so high-level information is preserved.
+   */
+  private applyContextTrim(): void {
+    const compressed = this.taskTree.compressCompletedNodes(1);
+
+    // Build and insert a summary message for each compressed node
+    if (compressed.length > 0) {
+      const lines: string[] = ["[Compressed: previous completed tasks]"];
+
+      for (const info of compressed) {
+        const typeLabel = info.type === "subtask" ? "Step" : "Task";
+        const summary = this.buildNodeSummary(
+          info.goal,
+          info.msgRange,
+        );
+        lines.push(`  ${typeLabel}: ${info.goal}`);
+        if (summary) lines.push(`    ${summary}`);
+      }
+
+      this.trackMessage("system", lines.join("\n"));
+    }
+
+    const retained = this.taskTree.getRetainedIndices();
+    this.context.trimToRetainedIndices(retained);
+  }
+
+  /**
+   * Scan the context history for a node's message range and build
+   * a concise one-line summary of what happened.
+   */
+  private buildNodeSummary(goal: string, range: [number, number]): string {
+    const [start, end] = range;
+    if (start >= end) return "";
+
+    const msgs = this.context.getHistorySlice(start, end);
+    const toolCalls = new Map<string, number>();
+    const filesRead = new Set<string>();
+    const filesWritten = new Set<string>();
+    let errors = 0;
+
+    for (const msg of msgs) {
+      // Count tool calls
+      if (msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          const name = (tc as any).function?.name ?? "unknown";
+          toolCalls.set(name, (toolCalls.get(name) ?? 0) + 1);
+        }
+      }
+      // Extract file paths from tool results
+      if (msg.role === "tool") {
+        if (msg.metadata?.file_path) {
+          const fp = msg.metadata.file_path as string;
+          if (msg.content?.startsWith("Tool 'write_file'")) {
+            filesWritten.add(fp);
+          } else {
+            filesRead.add(fp);
+          }
+        }
+        if (msg.metadata?.command) {
+          // shell command — try to extract file refs from the command text
+          const cmd = msg.metadata.command as string;
+          const fileMatch = cmd.match(/(?:cat|less|head|tail|grep)\s+(\S+)/);
+          if (fileMatch) filesRead.add(fileMatch[1]);
+        }
+        if (msg.metadata?.returncode != null && (msg.metadata.returncode as number) !== 0) {
+          errors++;
+        }
+      }
+    }
+
+    const parts: string[] = [];
+    if (toolCalls.size > 0) {
+      const callSummary = [...toolCalls.entries()]
+        .map(([name, count]) => `${name}${count > 1 ? ` x${count}` : ""}`)
+        .join(", ");
+      parts.push(`Tools: ${callSummary}`);
+    }
+    if (filesRead.size > 0) {
+      parts.push(`Read: ${[...filesRead].slice(0, 5).join(", ")}`);
+    }
+    if (filesWritten.size > 0) {
+      parts.push(`Wrote: ${[...filesWritten].slice(0, 5).join(", ")}`);
+    }
+    if (errors > 0) {
+      parts.push(`${errors} error(s)`);
+    }
+
+    return parts.length > 0 ? parts.join(" | ") : "Completed";
+  }
+
+  // ── Private: Implicit subtask detection ──────────────────────────────
+
+  /** Tool categories for pattern-based subtask inference. */
+  private static toolCategory(name: string, params: Record<string, unknown>): string {
+    if (name === "read_file" || name === "search_codebase") return "read";
+    if (name === "write_file") return "write";
+    if (name === "run_shell") {
+      const cmd = (params.command as string) ?? "";
+      const low = cmd.toLowerCase();
+      if (/\b(pytest?|jest|vitest|check|test)\b/.test(low)) return "test";
+      if (/\bgit\b/.test(low) && !/^\s*git/.test(low)) return "shell";
+      if (/^\s*git\b/.test(low)) return "git";
+      if (/\b(npm|npx|yarn|pnpm|bun)\b/.test(low)) return "install";
+      return "shell";
+    }
+    return "other";
+  }
+
+  /**
+   * After an iteration's tool calls, detect if the tool usage pattern
+   * shifted to a new category. If so, create an implicit subtask.
+   *
+   * Skips when there's an active plan with planner subtasks — those
+   * are tracked by checkStepCompletion instead.
+   */
+  private detectToolCategoryShift(toolCalls: import("./tools.js").ToolCall[]): void {
+    // Don't create implicit subtasks while a planner plan is active
+    if (this.plan) return;
+
+    // Determine the dominant category for this iteration
+    const categories = toolCalls.map(
+      (tc) => Orchestrator.toolCategory(tc.name, tc.parameters),
+    );
+    const dominant = this.mostFrequent(categories) ?? "other";
+
+    // No change → same implicit subtask continues
+    if (dominant === this.lastToolCategory) return;
+    this.lastToolCategory = dominant;
+
+    // Category changed → create a new implicit subtask
+    const goal = this.describeCategory(dominant);
+    const newSubtask = this.taskTree.createSubtask(this.rootTaskId!, goal);
+    this.taskTree.activeNodeId = newSubtask.id;
+    this.log(`── Implicit subtask: ${goal} ──`);
+  }
+
+  /** Describe a tool category in human terms. */
+  private describeCategory(cat: string): string {
+    const descriptions: Record<string, string> = {
+      read: "Read and explore code",
+      write: "Write and modify code",
+      shell: "Execute shell commands",
+      test: "Run tests and verify",
+      git: "Version control operations",
+      install: "Install dependencies",
+      other: "Other operations",
+    };
+    return descriptions[cat] ?? `Phase: ${cat}`;
+  }
+
+  /** Find the most frequent element in an array. */
+  private mostFrequent(arr: string[]): string | null {
+    if (arr.length === 0) return null;
+    const freq = new Map<string, number>();
+    let maxCount = 0;
+    let maxItem = arr[0];
+    for (const item of arr) {
+      const c = (freq.get(item) ?? 0) + 1;
+      freq.set(item, c);
+      if (c > maxCount) {
+        maxCount = c;
+        maxItem = item;
+      }
+    }
+    return maxItem;
   }
 
   // ── Private: Plan Generation & Injection ─────────────────────────────
@@ -211,11 +430,21 @@ export class Orchestrator {
     this.onPlanGenerated?.(plan);
 
     const planMessage = Planner.formatPlanMessage(plan);
-    this.context.addMessage("system", planMessage);
+    this.trackMessage("system", planMessage);
+
+    // Create subtasks in the tree for each plan step
+    for (const step of plan.steps) {
+      this.taskTree.createSubtask(this.rootTaskId!, step.description, step.id - 1);
+    }
+    // Activate the first subtask
+    const firstSubtasks = this.taskTree.nodes.get(this.rootTaskId!)?.children;
+    if (firstSubtasks && firstSubtasks.length > 0) {
+      this.taskTree.activeNodeId = firstSubtasks[0].id;
+    }
 
     // Set initial step context
     const firstStep = plan.steps[0];
-    this.context.addMessage(
+    this.trackMessage(
       "user",
       `Start with step 1/${plan.steps.length}: ${firstStep.description}`,
     );
@@ -230,13 +459,29 @@ export class Orchestrator {
     const stepMatch = response.match(/\[STEP\s*(\d+)\s*COMPLETE\]/i);
     if (!stepMatch || !this.plan) return;
 
+    const completedStepIdx = parseInt(stepMatch[1], 10) - 1; // 0-based
+
+    // Mark current subtask as completed
+    const rootNode = this.rootTaskId ? this.taskTree.nodes.get(this.rootTaskId) : undefined;
+    if (rootNode && completedStepIdx < rootNode.children.length) {
+      const subtask = rootNode.children[completedStepIdx];
+      this.taskTree.completeNode(subtask.id);
+    }
+
     this.tracker.advanceStep();
     const { currentStep, totalSteps } = this.tracker.state;
     this.onStepChange?.(currentStep, totalSteps);
 
     if (currentStep <= totalSteps) {
       const nextStep = this.plan.steps[currentStep - 1];
-      this.context.addMessage(
+
+      // Activate the next subtask
+      const nextSubtask = rootNode?.children[currentStep - 1];
+      if (nextSubtask) {
+        this.taskTree.activeNodeId = nextSubtask.id;
+      }
+
+      this.trackMessage(
         "user",
         `Proceed to step ${currentStep}/${totalSteps}: ${nextStep.description}`,
       );

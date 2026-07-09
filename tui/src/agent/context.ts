@@ -18,8 +18,9 @@ export class ContextManager {
   private systemPrompt: string | null = null;
 
   constructor(
-    private maxHistoryLength = Number.MAX_SAFE_INTEGER,
-    private maxMessageLength = Number.MAX_SAFE_INTEGER,
+    private maxHistoryLength = 200,
+    private maxMessageLength = 100_000,
+    private slidingWindowSize = 30,
   ) {}
 
   setSystemPrompt(prompt: string): void {
@@ -30,7 +31,7 @@ export class ContextManager {
     role: Message["role"],
     content: string,
     opts?: { toolCallId?: string; toolCalls?: Record<string, unknown>[]; metadata?: Record<string, unknown> },
-  ): void {
+  ): number {
     if (content.length > this.maxMessageLength) {
       content = content.slice(0, this.maxMessageLength) +
         `\n[Truncated - original length: ${content.length} characters]`;
@@ -43,8 +44,7 @@ export class ContextManager {
       tool_calls: opts?.toolCalls,
       metadata: opts?.metadata ?? {},
     });
-
-    this.trimHistory();
+    return this.history.length - 1; // return the index
   }
 
   addToolResult(
@@ -53,9 +53,9 @@ export class ContextManager {
     content: string,
     toolCallId: string,
     metadata?: Record<string, unknown>,
-  ): void {
+  ): number {
     const status = success ? "success" : "failed";
-    this.addMessage("tool", `Tool '${toolName}' execution ${status}:\n${content}`, {
+    return this.addMessage("tool", `Tool '${toolName}' execution ${status}:\n${content}`, {
       toolCallId,
       metadata,
     });
@@ -103,6 +103,43 @@ export class ContextManager {
     return messages;
   }
 
+  /**
+   * Apply task-tree-based trimming.
+   *
+   * Retains:
+   * 1. Messages in the active path (current task → subtask)
+   * 2. The last `slidingWindowSize` messages (always)
+   * 3. Messages from non-compressed completed nodes
+   *
+   * Everything else is marked as `irrelevant` and excluded from getPromptMessages().
+   */
+  trimToRetainedIndices(retained: Set<number>): void {
+    const lastN = Math.min(this.slidingWindowSize, this.history.length);
+    const windowStart = this.history.length - lastN;
+
+    for (let i = 0; i < this.history.length; i++) {
+      // Always keep the sliding window tail
+      if (i >= windowStart) continue;
+
+      // If not in the retained set → mark irrelevant
+      if (!retained.has(i)) {
+        this.history[i].metadata = { ...this.history[i].metadata, irrelevant: true };
+      }
+    }
+
+    // Enforce absolute max history length
+    this.trimHistory();
+  }
+
+  /** Reset all relevance markings. */
+  resetRelevance(): void {
+    for (const msg of this.history) {
+      if (msg.metadata?.irrelevant) {
+        delete msg.metadata.irrelevant;
+      }
+    }
+  }
+
   getStats(): { total: number; relevant: number } {
     let total = 0;
     let relevant = 0;
@@ -113,6 +150,11 @@ export class ContextManager {
       }
     }
     return { total, relevant };
+  }
+
+  /** Read a slice of the raw message history. */
+  getHistorySlice(start: number, end: number): Message[] {
+    return this.history.slice(start, end);
   }
 
   clear(): void {
