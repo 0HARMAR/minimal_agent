@@ -118,6 +118,7 @@ export class Orchestrator {
       const { terminate, reason } = this.tracker.shouldTerminate();
       if (terminate) {
         this.tracker.markCompleted(reason!, `Task terminated: ${reason}`);
+        this.log(this.toolRegistry.getUsageReport());
         break;
       }
 
@@ -163,6 +164,9 @@ export class Orchestrator {
           }
           const clean = finalResponse.replace("TASK_COMPLETE", "").trim();
           this.tracker.markCompleted("Task completed successfully", clean);
+          // Emit tool usage report
+          const report = this.toolRegistry.getUsageReport();
+          if (report) this.log(report);
           break;
         }
         continue;
@@ -533,7 +537,7 @@ export class Orchestrator {
       await hybrid.indexChunks(allChunks);
 
       // Register the search tool
-      this.toolRegistry.register(new SearchCodebaseTool(this.projectRoot, hybrid));
+      this.toolRegistry.register(new SearchCodebaseTool(this.projectRoot, hybrid, this.toolRegistry.cache));
 
       this.log(`RAG ready: ${allChunks.length} chunks indexed, ${hybrid.size} embedded`);
     } catch (e: any) {
