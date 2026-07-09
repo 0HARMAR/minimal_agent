@@ -144,6 +144,7 @@ export default function App() {
         modelName: process.env["MODEL_NAME"],
         apiKey: process.env["DEEPSEEK_API_KEY"],
         context: contextRef.current,
+        enableRag: true,
         onLog: (msg: string) => {
           addMessage(msg);
           const iterMatch = msg.match(/=== Iteration (\d+)\/(\d+) ===/);

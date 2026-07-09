@@ -90,6 +90,9 @@ Available tools:
 - read_file: Read a file from the project directory
 - write_file: Write content to a file in the project directory
 - run_shell: Run a shell command in the project directory
+- search_codebase: Search the project codebase by concept, symbol, or question (hybrid search)
+
+(search_codebase returns relevant code chunks with file paths and line ranges — use it when you need to understand code you haven't read yet.)
 
 When you are finished with the task, end your response with "TASK_COMPLETE" followed by your final summary.`
     );

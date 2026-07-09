@@ -1,7 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { ContextManager } from "./context.js";
-import { ToolRegistry } from "./tools.js";
+import { ToolRegistry, SearchCodebaseTool } from "./tools.js";
 import { LLMGateway } from "./llm-gateway.js";
 import { TaskTracker } from "./task-tracker.js";
 import { Planner, type Plan } from "./planner.js";
@@ -21,6 +21,8 @@ export interface OrchestratorOpts {
   onContextStats?: (stats: { total: number; relevant: number; promptTokens: number }) => void;
   onPlanGenerated?: (plan: Plan) => void;
   onStepChange?: (step: number, total: number) => void;
+  /** Enable RAG (hybrid dense+sparse) codebase search. Requires Ollama running locally. */
+  enableRag?: boolean;
 }
 
 export class Orchestrator {
@@ -41,6 +43,8 @@ export class Orchestrator {
   private onContextStats?: (stats: { total: number; relevant: number; promptTokens: number }) => void;
   private onPlanGenerated?: (plan: Plan) => void;
   private onStepChange?: (step: number, total: number) => void;
+  private ragReady = false;
+  private enableRag = false;
 
   constructor(opts: OrchestratorOpts) {
     this.projectRoot = opts.projectRoot;
@@ -67,12 +71,21 @@ export class Orchestrator {
     const cleanObjective = isSideQuest ? opts.objective.slice(7).trim() : opts.objective;
     this.context.addMessage("user", `Your task: ${cleanObjective}`);
     this.emitContextStats();
+
+    // Mark RAG for async init in run() if enabled
+    this.enableRag = opts.enableRag ?? false;
+    this.ragReady = !this.enableRag;
   }
 
   async run(): Promise<string> {
     this.log(`Starting agent execution for task: ${this.tracker.state.objective}`);
     this.log(`Max iterations: ${this.maxIterations}`);
     this.log("");
+
+    // ── RAG Initialization (lazy, only if enabled) ─────────────────────
+    if (!this.ragReady) {
+      await this.initRag();
+    }
 
     // ── Plan Generation Phase ──────────────────────────────────────────
     const isSideQuest = this.tracker.state.objective.startsWith("[SIDE] ");
@@ -160,7 +173,7 @@ export class Orchestrator {
             }
           }
 
-          const result = this.toolRegistry.executeToolCall(tc);
+          const result = await this.toolRegistry.executeToolCall(tc);
 
           this.context.addToolResult(tc.name, result.success, result.content, tc.id, result.metadata as Record<string, unknown>);
 
@@ -229,6 +242,61 @@ export class Orchestrator {
       );
       this.log(`--- Step ${currentStep}/${totalSteps}: ${nextStep.description} ---`);
     }
+  }
+
+  // ── Private: RAG (codebase search) ──────────────────────────────────
+
+  /**
+   * Lazy-initialize the hybrid search index.
+   * Scans the project root, builds chunks, embeds them via Ollama,
+   * indexes with BM25, and registers the search_codebase tool.
+   */
+  private async initRag(): Promise<void> {
+    this.log("Initializing RAG codebase index...");
+
+    try {
+      const { ChunkBuilder } = await import("../rag/chunk-builder.js");
+      const { Embedder } = await import("../rag/embedder.js");
+      const { BM25Index } = await import("../rag/bm25.js");
+      const { HybridSearch } = await import("../rag/hybrid-search.js");
+
+      const builder = new ChunkBuilder();
+      await builder.init();
+
+      const files = builder.collectFiles(this.projectRoot);
+      this.log(`Found ${files.length} source files for indexing`);
+
+      const allChunks: import("../rag/types.js").CodeChunk[] = [];
+      for (const f of files) {
+        try {
+          const chunks = await builder.build(f);
+          allChunks.push(...chunks);
+        } catch {
+          // skip unparseable files
+        }
+      }
+
+      if (allChunks.length === 0) {
+        this.log("Warning: No chunks could be extracted — RAG disabled.");
+        this.ragReady = false;
+        return;
+      }
+
+      const embedder = new Embedder();
+      const bm25 = new BM25Index();
+      const hybrid = new HybridSearch(embedder, bm25);
+      await hybrid.indexChunks(allChunks);
+
+      // Register the search tool
+      this.toolRegistry.register(new SearchCodebaseTool(this.projectRoot, hybrid));
+
+      this.log(`RAG ready: ${allChunks.length} chunks indexed, ${hybrid.size} embedded`);
+    } catch (e: any) {
+      this.log(`Warning: RAG initialization failed — ${e.message ?? String(e)}. ` +
+        `Agent will continue without codebase search. Make sure Ollama is running.`);
+    }
+
+    this.ragReady = true;
   }
 
   // ── Private: Logging / Stats ─────────────────────────────────────────

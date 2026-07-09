@@ -43,7 +43,7 @@ export abstract class BaseTool {
     }
   }
 
-  abstract run(parameters: Record<string, unknown>): ToolResult;
+  abstract run(parameters: Record<string, unknown>): ToolResult | Promise<ToolResult>;
 
   toSchema(): ToolSchema {
     const required: string[] = [];
@@ -208,7 +208,7 @@ export class ToolRegistry {
     return [...this.tools.values()].map((t) => t.toSchema());
   }
 
-  executeToolCall(toolCall: ToolCall): ToolResult {
+  async executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
     const tool = this.tools.get(toolCall.name);
     if (!tool) {
       return {
@@ -217,6 +217,84 @@ export class ToolRegistry {
         metadata: {},
       };
     }
-    return tool.run(toolCall.parameters);
+    return await tool.run(toolCall.parameters);
+  }
+}
+
+// ── SearchCodebase ─────────────────────────────────────────────────────────
+
+import type { HybridSearch } from "../rag/hybrid-search.js";
+
+export class SearchCodebaseTool extends BaseTool {
+  name = "search_codebase";
+  description =
+    "Search the project codebase using hybrid (embedding + BM25) retrieval. " +
+    "Use this when you need to find relevant code — functions, classes, interfaces, " +
+    "or files — related to a specific concept, symbol, or question. " +
+    "Results include the chunk type, file path, line range, and code content.";
+  parameters = {
+    query: {
+      type: "string",
+      description: "The search query — describe what you're looking for in natural language",
+      required: true,
+    },
+    max_results: {
+      type: "number",
+      description: "Maximum results to return (default: 5, max: 20)",
+      required: false,
+    },
+  };
+
+  private hybrid: HybridSearch;
+
+  constructor(projectRoot: string, hybrid: HybridSearch) {
+    super(projectRoot); // projectRoot not used by this tool, but BaseTool requires it
+    this.hybrid = hybrid;
+  }
+
+  async run(params: Record<string, unknown>): Promise<ToolResult> {
+    try {
+      const query = (params.query as string)?.trim();
+      if (!query) {
+        return { success: false, content: "Query cannot be empty", metadata: {} };
+      }
+      const maxResults = Math.min(Math.max(1, (params.max_results as number) ?? 5), 20);
+
+      const results = await this.hybrid.search(query);
+
+      if (results.length === 0) {
+        return { success: true, content: `No results found for: "${query}"`, metadata: { query, count: 0 } };
+      }
+
+      const lines: string[] = [
+        `Search results for: "${query}"`,
+        `Found ${results.length} relevant code chunks:\n`,
+      ];
+
+      for (const r of results.slice(0, maxResults)) {
+        const f = r.chunk.filePath.split("/").pop() ?? r.chunk.filePath;
+        const parent = r.chunk.parentName ? ` (in ${r.chunk.parentName})` : "";
+        const sig = r.chunk.signature ? `\n       Signature: ${r.chunk.signature.split("\n")[0]}` : "";
+        lines.push(
+          `  ── ${r.chunk.type} ${r.chunk.name}${parent} ──`,
+          `     File: ${f}:${r.chunk.startLine}-${r.chunk.endLine}`,
+          `     Relevance: ${(r.score * 100).toFixed(0)}%${sig}`,
+          `     Code:`,
+          ...r.chunk.content.split("\n").slice(0, 15).map((l) => `       │ ${l}`),
+        );
+        if (r.chunk.content.split("\n").length > 15) {
+          lines.push(`       │ … (${r.chunk.content.split("\n").length - 15} more lines)`);
+        }
+        lines.push("");
+      }
+
+      return {
+        success: true,
+        content: lines.join("\n"),
+        metadata: { query, count: results.length },
+      };
+    } catch (e: any) {
+      return { success: false, content: `Error searching codebase: ${e.message ?? String(e)}`, metadata: {} };
+    }
   }
 }
